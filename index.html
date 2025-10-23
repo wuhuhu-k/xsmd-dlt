@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>西山煤电供电系统</title>
+  <script src="./utils/d3.v7.min.js"></script>
+  <link rel="stylesheet" type="text/css" href="./css/main.css" />
+</head>
+
+<body>
+  <div>
+    <div id="title">
+      <span>西山煤电供电系统</span>
+      <!-- 主题配色 -->
+      <div class="theme">
+        <select id="theme-select">
+          <option value="dark">深色</option>
+          <option value="light">浅色</option>
+        </select>
+      </div>
+      <!-- 自适应 -->
+      <div class="adaptive">
+        自适应
+        <input type="checkbox" id="text-switch" class="text-switch" />
+        <label for="text-switch"></label>
+      </div>
+      <div class="openDialog">
+        开关提示
+        <input type="checkbox" id="dialog-switch" class="dialog-switch" />
+        <label for="dialog-switch"></label>
+      </div>
+      <div class="drillMode">
+        预演模式
+        <input type="checkbox" id="drill-switch" class="drill-switch" checked />
+        <label for="drill-switch"></label>
+      </div>
+      <div class="AIask" id="AIask">智能问答</div>
+      <div class="AIask-dialog" id="AIask-dialog">
+        <div class="dialog-header flex">
+          <div class="ask-name">西山煤电应急助手</div>
+        </div>
+        <iframe src="http://dify.jnetdata.com:8081/chatbot/c3iBZO2GQdJ7h8r7"
+          style="width: 100%; height: 100%; min-height: 700px" frameborder="0" allow="microphone">
+        </iframe>
+      </div>
+
+    </div>
+    <svg id="circuit" width="8300" height="2500"></svg>
+  </div>
+</body>
+<!-- 插件 -->
+<script src="./utils/jquery-3.6.4.min.js"></script>
+<script src="./utils/sweetalert.js"></script>
+<script src="./utils/treeNode.js"></script>
+
+<!-- 电路图配置文件引入 -->
+<script src="./configNew/data.js"></script>
+<script src="./configNew/malan.js"></script>
+<script src="./configNew/tunlan.js"></script>
+<script src="./configNew/huyandiao.js"></script>
+<script src="./configNew/yingdu.js"></script>
+<script src="./configNew/helongwan.js"></script>
+<script>
+  const API_KEY = 'app-KZOAnlCxwnbELuunzCMOVniL';
+  // 主题颜色
+  const colorTheme = {
+    dark: "dark",
+    light: "light",
+  };
+  // 当前颜色主题
+  var theme = 'dark';
+  document.body.classList = [theme];
+  var adaptive = $("#text-switch").is(":checked");
+  var openDialog = $("#dialog-switch").is(":checked");
+  var drillMode = $("#drill-switch").is(":checked");
+  // 缩放倍率
+  let scaleX = 1;
+  let scaleY = 1;
+  // 绘制电路
+  const svg = d3.select("#circuit");
+  const station = [
+    malan,
+    tunlan,
+    huyandiao,
+    yingdu,
+    helongwan,
+  ];
+  var stationMap = null;
+  var switchDetila = [];
+  var allNode = [];
+
+  init();
+
+  function init() {
+    $('#AIask-dialog').toggle();
+    // 主题改变监听
+    $("#theme-select").on("change", () => {
+      theme = colorTheme[$("#theme-select").val()];
+      document.body.classList = [theme];
+      console.log('11111');
+    });
+
+    // 自适应开关监听
+    $("#text-switch").on("change", function () {
+      adaptive = $(this).is(":checked");
+      reSizePage();
+    });
+    reSizePage();
+    // 弹窗监听
+    $("#dialog-switch").on("change", function () {
+      openDialog = $(this).is(":checked");
+    });
+    // 预演模式  获取数据  重新激活一次电力来源, 保证电力来源设置正确
+    $("#drill-switch").on("change", function () {
+      drillMode = $(this).is(":checked");
+      if (!drillMode) {
+        getSwitchDetail();
+        const powerNode = allNode.find((node) => node.name === "stationInLine");
+        // 激活电力来源
+        powerNode.forEach((node) => {
+          if (node.name === "stationInLine") {
+            node.state = 0;
+          }
+        });
+        powerNode.forEach((node) => {
+          if (node.name === "stationInLine") {
+            node.state = 0;
+          }
+        });
+      }
+    });
+    // 智能问答弹窗监听
+    $("#AIask").on("click", function () {
+      $('#AIask-dialog').toggle();
+    });
+    // 智能问答 发送按钮监听
+    $("#ask-btn").on("click", function () {
+      sendMessage();
+    });
+    // 页面缩放监听
+    window.addEventListener("resize", function () {
+      reSizePage();
+    });
+    // 重置滚动轴
+    // $("html, body").scrollTop(0);
+    // $("html, body").scrollLeft(0);
+
+    // 生成电力图树状结构
+    stationMap = station.map((item) => {
+      return buildTreeFromObject(item);
+    });
+
+    // 最后渲染电路组件  防止文字覆盖
+    comArray.forEach((item) => {
+      create(item.node, item.colorIndex);
+    })
+
+    // 扁平化树节点
+    allNode = flatTree();
+
+    // 建立关联关系
+    buildLinkByTree(stationMap);
+    // 激活电力来源
+    allNode.forEach((node) => {
+      if (node.name === "stationInLine") {
+        node.state = 1;
+      }
+    });
+    drillMode = false;
+    getSwitchDetail();
+    drillMode = $("#drill-switch").is(":checked");
+
+  }
+  // 元素缩放
+  function scaleDiv(divElement, targetWidth, targetHeight) {
+    scaleX = targetWidth / divElement.clientWidth;
+    scaleY = targetHeight / divElement.clientHeight;
+    divElement.style.transform = `scale(${scaleX}, ${scaleY})`;
+    divElement.style.transformOrigin = "0 0";
+  }
+  // 页面缩放
+  function reSizePage() {
+    if (adaptive) {
+      $("html, body").scrollTop(0);
+      $("html, body").scrollLeft(0);
+      document.body.style.overflow = "hidden";
+      const el = document.getElementById("circuit");
+      scaleDiv(el, $(window).width(), $(window).height() - 70);
+    } else {
+      document.getElementById("circuit").style.transform = "scale(1, 1)";
+      document.body.style.overflow = "auto";
+    }
+  }
+  // 非递归方式从对象构建树
+  function buildTreeFromObject(obj) {
+    const root = new StateNode(obj);
+    const stack = [{ parentNode: root, childrenData: obj.children || [] }];
+    // 遍历栈直到为空
+    while (stack.length > 0) {
+      const { parentNode, childrenData } = stack.pop();
+      childrenData.reverse().forEach((childData) => {
+        const childNode = parentNode.addChild(childData);
+        if (childData.children) {
+          stack.push({
+            parentNode: childNode,
+            childrenData: childData.children,
+          });
+        }
+      });
+    }
+    return root;
+  }
+  // 扁平化树节点
+  function flatTree() {
+    const flatTree = [];
+    let flat = (tree) => {
+      if (tree.children) {
+        for (const child of tree.children) {
+          flat(child);
+          // 保存所有节点
+          flatTree.push(child);
+        }
+      }
+    }
+    stationMap.forEach((tree) => {
+      flat(tree);
+    });
+    return flatTree;
+  }
+  // 建立关联关系 非递归方式遍历树
+  function buildLinkByTree(stationMap) {
+    allNode.forEach((node) => {
+      // 建立关联关系
+      if (node.linkTo) {
+        node.linkTo.forEach((linkId) => {
+          // 根据ID 查找对应节点
+          const linkNode = allNode.find((item) => item.id === linkId);
+          // 找到则建立联系
+          if (linkNode) {
+            // immediateSync 是否立即传播
+            node.buildLink(linkNode, { immediateSync: true });
+          }
+        });
+      }
+    });
+    // stationMap.forEach((tree) => {
+    //   const stack = [{ parentNode: tree, children: tree.children || [] }];
+    //   // 遍历栈直到为空
+    //   while (stack.length > 0) {
+    //     const { parentNode, children } = stack.pop();
+    //     children.reverse().forEach((node) => {
+    //       // 建立关联关系
+    //       if (node.linkTo) {
+    //         node.linkTo.forEach((linkId) => {
+    //           // 根据ID 查找对应节点
+    //           // const linkNode = findNodeById(linkId);
+    //           // 根据ID 查找对应节点
+    //           const linkNode = allNode.find((item) => item.id === linkId);
+    //           // 找到则建立联系
+    //           if (linkNode) {
+    //             // immediateSync 是否立即传播
+    //             node.buildLink(linkNode, { immediateSync: true });
+    //           }
+    //         });
+    //       }
+    //       // 存在子节点 则入栈
+    //       if (node.children) {
+    //         stack.push({
+    //           parentNode: node,
+    //           children: node.children,
+    //         });
+    //       }
+    //     });
+    //   }
+    // });
+  }
+  function findAAA(label) {
+    let node = allNode.find((item) => item.label === label);
+    console.log(node, 'node');
+    return node;
+  }
+  // 根据id 找到对应节点
+  function findNodeById(value, key = 'id') {
+    let node = null;
+    stationMap.forEach((tree) => {
+      let target = findNodeInTree(tree, value, key);
+      if (target) {
+        node = target;
+      }
+    });
+    return node;
+  }
+  // 根据节点id 查找对应节点
+  function findNodeInTree(tree, value, key = 'id') {
+    let node = null;
+    if (tree[key] === value) {
+      return tree;
+    }
+    if (tree.children) {
+      for (const child of tree.children) {
+        const found = findNodeInTree(child, value, key);
+        if (found) {
+          return found;
+        }
+      }
+    }
+    return null;
+  }
+
+  // 获取开关数据详情
+  function getSwitchDetail() {
+    if (drillMode) return;
+    // 获取按钮数据
+    const params = {
+      "entity": { "docstatus": "0", "andOr": "and", "status": "", "switchcode": "", "stationname": "", "switchstate": "", "message": "", "powerfrom": "", "voltage": "", "switchlevel": "", "matchs": { "switchcode": "1", "stationname": "1", "switchstate": "1", "message": "1", "powerfrom": "1", "voltage": "1", "switchlevel": "1" }, "columnid": "1961231538582466562" },
+      "pager": {
+        "current": 1,
+        "size": 1000,
+        "sortProps": [
+          { "key": "seqencing", "value": false },
+          { "key": "createTime", "value": false }
+        ]
+      }
+    }
+    ajax('http://36.134.130.83:8081/xsmd/xsmdswitch/listing', 'post', JSON.stringify(params)).then(function (data) {
+      if (data.success) {
+        switchDetila = data.obj.records;
+        // switchDetila = [data.obj.records[data.obj.records.length - 1]];
+        switchDetila.forEach(item => {
+          // 找到对应节点
+          // const node = findNodeById(item.switchcode, 'label');
+          let node = allNode.find((node) => {
+            return item.switchcode.trim() === (node.label + '').trim() && item.stationname === node.belongStation
+          });
+          if (node) {
+            node.state = item.switchstate == 1 ? 1 : 0;
+            node.message = item.message;
+            node.detail = item;
+          }
+        })
+        // 接口轮询  每5秒轮询一次
+        setTimeout(getSwitchDetail, 5000);
+      }
+    }).catch(function (e) {
+      // 激活电力来源
+      allNode.forEach((node) => {
+        if (node.name === "stationInLine") {
+          node.state = 1;
+        }
+      });
+    });
+  }
+  // 修改开关提示数据
+  function changeSwitchDetail(item, message) {
+    return ajax(`http://36.134.130.83:8081/xsmd/xsmdswitch/${item.id}`, 'post', JSON.stringify({ message }))
+  }
+  // 封装ajax请求
+  function ajax(url, type, data, config = {}) {
+    return new Promise(function (resovle, reject) {
+      $.ajax(Object.assign({
+        type: type,
+        url: url,
+        contentType: 'application/json',
+        data: data,
+        dataType: 'json',
+        crossDomain: true,
+        xhrFields: {
+          withCredentials: true
+        },
+        headers: {},
+        success: function (res) {
+          if (res.success) {
+            resovle(res);
+          } else {
+            reject(res);
+          }
+        },
+        error: function (err) {
+          reject(err);
+        }
+      }, config))
+    }).catch(function (e) {
+      console.log(e);
+    });
+  }
+</script>
+
+</html>
